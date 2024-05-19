@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-deployment
+  namespace: pre-prod
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: node-backend
+  template:
+    metadata:
+      labels:
+        app: node-backend
+    spec:
+      containers:
+        - name: node-backend
+          image: hoangquoctrung/be-cicd:pre-prod_13960863
+          envFrom:
+            - secretRef:
+                name: backend-secret
+          resources:
+            limits:
+              cpu: 200m
+            requests:
+              cpu: 100m
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend-deployment
+  namespace: pre-prod
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vue-app
+  template:
+    metadata:
+      labels:
+        app: vue-app
+    spec:
+      containers:
+        - name: vue-app
+          image: hoangquoctrung/fe-cicd:dev_419f81b5
+          ports:
+            - containerPort: 80
+          envFrom:
+            - configMapRef:
+                name: frontend-config
+          resources:
+            limits:
+              cpu: "300m"
+            requests:
+              cpu: "100m"

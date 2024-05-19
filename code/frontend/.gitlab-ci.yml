@@ -1,0 +1,109 @@
+stages:
+  - UnitTesting
+  - SAST
+  - BuildAndPush
+  - Deploy
+variables:
+  REPOSITORY: fe-cicd
+  IMAGE_TAG_PREFIX: dev
+####################################
+
+buildandpush:
+  stage: BuildAndPush
+  variables:
+    GIT_STRATEGY: clone
+  rules:
+    - if: $CI_COMMIT_BRANCH == "develop" && $CI_COMMIT_TITLE =~ /^Merge branch 'feature\/.*/
+      variables:
+        IMAGE_TAG_PREFIX: dev
+      when: always
+
+    - if: $CI_COMMIT_BRANCH == "develop" && $CI_COMMIT_TITLE =~ /^Merge branch 'release\/.*/
+      variables:
+        IMAGE_TAG_PREFIX: release
+      when: always
+
+    - if: $CI_COMMIT_BRANCH == "pre-prod" && $CI_COMMIT_TITLE =~ /^Merge branch 'release\/.*/
+      variables:
+        IMAGE_TAG_PREFIX: pre-prod
+      when: always
+
+    - if: $CI_COMMIT_TAG
+      variables:
+        IMAGE_TAG_PREFIX: main
+      when: always
+
+  before_script:
+    - >
+      if [ "${IMAGE_TAG_PREFIX}" != "main" ]; then
+        export DOCKER_IMAGE="${REGISTRY_URL}/${REGISTRY_USER}/${REPOSITORY}:${IMAGE_TAG_PREFIX}_${CI_COMMIT_SHORT_SHA}"
+      else
+        export DOCKER_IMAGE="${REGISTRY_URL}/${REGISTRY_USER}/${REPOSITORY}:${CI_COMMIT_TAG}"
+      fi
+    - echo ${DOCKER_IMAGE}
+    - docker login $REGISTRY_URL -u ${REGISTRY_USER} -p ${REGISTRY_PASSWORD}
+  script:
+    - docker build -t $DOCKER_IMAGE .
+    - docker push $DOCKER_IMAGE
+  tags:
+    - fe-runner
+
+##########################
+
+deploy:
+  stage: Deploy
+  variables:
+    GIT_STRATEGY: clone
+    DEPLOY_TO_ENV: dev
+  rules:
+    - if: $CI_COMMIT_BRANCH == "develop" && $CI_COMMIT_TITLE =~ /^Merge branch 'feature\/.*/
+      variables:
+        IMAGE_TAG_PREFIX: dev
+        DEPLOY_TO_ENV: dev
+      when: always
+
+    - if: $CI_COMMIT_BRANCH == "develop" && $CI_COMMIT_TITLE =~ /^Merge branch 'release\/.*/
+      variables:
+        IMAGE_TAG_PREFIX: release
+        DEPLOY_TO_ENV: dev
+      when: always
+
+    - if: $CI_COMMIT_BRANCH == "pre-prod" && $CI_COMMIT_TITLE =~ /^Merge branch 'release\/.*/
+      variables:
+        IMAGE_TAG_PREFIX: pre-prod
+        DEPLOY_TO_ENV: pre-prod
+      when: manual
+
+    # CONFIRMATION TO DEPLOY TO PROD
+    - if: $CI_COMMIT_TAG
+      variables:
+        IMAGE_TAG_PREFIX: main
+        DEPLOY_TO_ENV: prod
+      when: manual
+    - when: never
+  before_script:
+    - >
+      if [ "${IMAGE_TAG_PREFIX}" != "main" ]; then
+        export NEW_TAG="${IMAGE_TAG_PREFIX}_${CI_COMMIT_SHORT_SHA}"
+      else
+        export NEW_TAG="${CI_COMMIT_TAG}"
+      fi
+  script:
+    - echo $NEW_TAG
+    - git clone git@gitlab.ops-ai.dev:hn24_fr_devops_01/cicd/trunghq-cicd-lab/manifest-argocd.git
+    - cd manifest-argocd
+    - git config --local user.name "Runner"
+    - git config --local user.email "XXXXXXXXXXXXXXXXX"
+    - cd $DEPLOY_TO_ENV
+    - cat deployment.yaml
+    - sed -i "s|$REGISTRY_USER/$REPOSITORY:[^ ]*|$REGISTRY_USER/$REPOSITORY:$NEW_TAG|" deployment.yaml
+    - cat deployment.yaml
+    - git status
+    - git add .
+    - git status
+    - git commit -m "Update ArgoCD manifests of Front-end to $NEW_TAG"
+    - git push origin main
+    - echo "Deploying to ${DEPLOY_TO_ENV} with ArgoCD..."
+    - echo "Deploying image = $NEW_TAG"
+  tags:
+    - fe-runner
